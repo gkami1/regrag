@@ -1,0 +1,32 @@
+[project]
+name = "regrag"
+version = "0.1.0"
+description = "RAG for engineering standards and regulations"
+readme = "README.md"
+authors = [
+    { name = "gkami1", email = "gabdulhakovkamil@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+regrag = "regrag:main"
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "ipykernel",
+    "jupyterlab",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"

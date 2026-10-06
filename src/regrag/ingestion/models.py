@@ -15,6 +15,8 @@ BBox = tuple[float, float, float, float]
 # stages decide what to use, and the tags stay inspectable for debugging.
 Role = Literal["body", "header", "footer", "footnote", "toc", "noise"]
 
+BlockType = Literal["heading", "text"]
+
 
 @dataclass(frozen=True)
 class HLine:
@@ -45,8 +47,14 @@ class ParsedBlock:
     font_size: float = 0.0  # dominant size, weighted by characters
     is_bold: bool = False  # majority of characters are bold
     role: Role = "body"
-    block_type: str = "text"  # "text" | "title" | "subtitle"
+    # Set by style analysis: rank of this block's font style among heading styles
+    # (1 = most prominent), None for body-styled text.
+    heading_level: int | None = None
+    # Set by structure analysis.
+    block_type: BlockType = "text"
     section_number: str | None = None  # "3.10.12" or None
+    scope: str | None = None  # "Regulation", "Annex 3", "Annex 1 - Part 1 - Appendix 2"
+    breadcrumb: list[str] = field(default_factory=list)  # scope title, then section path
 
     @property
     def y0(self) -> float:
@@ -70,11 +78,36 @@ class LayoutReport:
 
 
 @dataclass
+class StyleReport:
+    body_style: str  # e.g. "10.0 regular"
+    heading_levels: dict[str, int] = field(default_factory=dict)  # style -> level
+
+
+@dataclass
+class ScopeInfo:
+    id: str  # "Annex 3"
+    title: str  # "Requirements to be met by all vehicles"
+    first_page: int
+
+
+@dataclass
+class StructureReport:
+    scopes: list[ScopeInfo] = field(default_factory=list)
+    numbered_blocks: int = 0
+    heading_blocks: int = 0
+    # Numbering that goes backwards without a scope change, e.g. 7.6 after 7.9.
+    # Usually a parsing problem (a table cell or list item that looks numbered).
+    backward_jumps: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ParsedDocument:
     source_path: str
     pages: list[PageInfo]
     blocks: list[ParsedBlock] = field(default_factory=list)
     layout: LayoutReport | None = None
+    styles: StyleReport | None = None
+    structure: StructureReport | None = None
 
     @property
     def total_pages(self) -> int:

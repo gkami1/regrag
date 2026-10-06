@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""Inspect parsed PDF: layout decisions and block structure, for manual review."""
+"""Inspect a parsed PDF for manual review: layout, styles, outline, breadcrumbs.
+
+Usage: python scripts/inspect_parsed.py [PDF] [PAGE]
+    PAGE: also print every body block on that page with its breadcrumb.
+"""
 
 import sys
 from collections import Counter
 from pathlib import Path
 
-from regrag.ingestion import parse_pdf
+from regrag.ingestion import ParsedDocument, parse_pdf
 
 # Windows consoles default to a legacy code page; regulation text has ≤, °, Ω, ...
 sys.stdout.reconfigure(encoding="utf-8")
 
 
-def main(pdf_path: str, limit: int = 60) -> None:
-    parsed = parse_pdf(Path(pdf_path))
-    body = parsed.body_blocks()
+def print_layout(parsed: ParsedDocument) -> None:
     report = parsed.layout
-
-    print(f"\n=== {pdf_path} ===")
-    print(f"Pages: {parsed.total_pages}, Blocks: {len(parsed.blocks)} (body: {len(body)})")
-
     print("\n=== Layout ===")
     print(f"Body font size: {report.body_font_size}pt")
     print(f"Header zone: top {report.header_depth}pt, footer zone: bottom {report.footer_depth}pt")
@@ -34,31 +32,58 @@ def main(pdf_path: str, limit: int = 60) -> None:
             continue
         distinct = Counter(b.text[:70] for b in examples)
         print(f"\n--- {role} ({len(examples)} blocks, {len(distinct)} distinct) ---")
-        for text, count in distinct.most_common(8):
+        for text, count in distinct.most_common(5):
             print(f"  x{count:<3} {text!r}")
 
-    print(f"\nBlock types (body): {dict(Counter(b.block_type for b in body))}")
-    fonts = Counter((b.font_size, b.is_bold) for b in body)
-    print("\nFont distribution (size, bold) -> count:")
-    for (size, bold), count in fonts.most_common(15):
-        print(f"  size={size:5.1f}  bold={bold!s:5}  count={count}")
 
-    print(f"\n=== First {limit} body blocks ===")
-    for i, b in enumerate(body[:limit]):
-        sec = f"[{b.section_number}]" if b.section_number else ""
-        print(
-            f"[{i:04d}] p.{b.page_number:3d} {b.block_type:8s} "
-            f"sz={b.font_size:4.1f} bold={int(b.is_bold)} {sec:10s} | {b.text[:90]}"
-        )
+def print_structure(parsed: ParsedDocument) -> None:
+    body = parsed.body_blocks()
+    styles, structure = parsed.styles, parsed.structure
 
-    print("\n=== All detected titles ===")
-    for i, b in enumerate(body):
-        if b.block_type in ("title", "subtitle"):
-            sec = f"[{b.section_number}]" if b.section_number else ""
-            print(f"[{i:04d}] p.{b.page_number:3d} {b.block_type:8s} {sec:10s} | {b.text[:90]}")
+    print("\n=== Styles ===")
+    print(f"Body style: {styles.body_style}")
+    print(f"Heading levels: {styles.heading_levels}")
+
+    print("\n=== Structure ===")
+    print(f"Block types (body): {dict(Counter(b.block_type for b in body))}")
+    print(f"Numbered blocks: {structure.numbered_blocks}")
+    print(f"Scopes ({len(structure.scopes)}):")
+    for s in structure.scopes:
+        print(f"  p.{s.first_page:3d} {s.id:32s} {s.title[:70]}")
+    print(f"Backward jumps ({len(structure.backward_jumps)}):")
+    for j in structure.backward_jumps[:20]:
+        print(f"  {j}")
+
+    print("\n=== Outline (numbered headings, indented by depth) ===")
+    scope = None
+    for b in body:
+        if b.scope != scope:
+            scope = b.scope
+            print(f"[{scope}]")
+        if b.block_type == "heading" and b.section_number:
+            depth = b.section_number.count(".")
+            print(f"  p.{b.page_number:3d} {'  ' * depth}{b.text[:80]}")
+
+
+def print_page(parsed: ParsedDocument, page: int) -> None:
+    print(f"\n=== Body blocks on page {page} with breadcrumbs ===")
+    for b in parsed.body_blocks():
+        if b.page_number == page:
+            print(f"{b.block_type:7s} | {b.text[:70]}")
+            print(f"        > {' > '.join(b.breadcrumb)}")
+
+
+def main(pdf_path: str, page: int | None = None) -> None:
+    parsed = parse_pdf(Path(pdf_path))
+    print(f"\n=== {pdf_path} ===")
+    print(f"Pages: {parsed.total_pages}, Blocks: {len(parsed.blocks)}")
+    print_layout(parsed)
+    print_structure(parsed)
+    if page:
+        print_page(parsed, page)
 
 
 if __name__ == "__main__":
     pdf = sys.argv[1] if len(sys.argv) > 1 else "data/raw/R107r9e.pdf"
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 60
-    main(pdf, limit)
+    page = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    main(pdf, page)

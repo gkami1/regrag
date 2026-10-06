@@ -1,8 +1,11 @@
-"""PDF parsing: extraction -> layout analysis -> block classification.
+"""PDF parsing pipeline: extraction -> layout -> styles -> structure.
 
-Extraction only records what is on the page (text, position, dominant font, rules).
-Furniture detection lives in `layout.py`. The title/subtitle heuristics below are
-still R107-tuned and will be replaced by document-relative style analysis.
+Extraction (this module) only records what is on the page: text, position,
+dominant font, horizontal rules. Every decision is made by a later stage:
+
+- `layout.py`:    page furniture (headers, footers, footnotes) -> block.role
+- `styles.py`:    heading font styles relative to body text   -> block.heading_level
+- `structure.py`: scopes, numbering tree, breadcrumbs          -> block.scope/breadcrumb
 """
 
 import logging
@@ -14,6 +17,8 @@ import pymupdf
 
 from regrag.ingestion.layout import LayoutConfig, annotate_layout
 from regrag.ingestion.models import HLine, PageInfo, ParsedBlock, ParsedDocument
+from regrag.ingestion.structure import UNECE_PROFILE, DocProfile, annotate_structure
+from regrag.ingestion.styles import StyleConfig, annotate_styles
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +27,6 @@ _BOLD_FLAG = 16
 
 # ToC entry: text, at least 4 dots in a row, page number at the end.
 _TOC_RE = re.compile(r"\.{4,}\s*\d+\s*$")
-
-# Numbering: "1.", "1.1.", "3.10.12."
-_NUMBERED_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\.\s+\S")
-
-# Annex heading: "Annex 12", "Annex 1 - Part 1 - Appendix 2"
-_ANNEX_RE = re.compile(r"^\s*Annex\s+\d+", re.IGNORECASE)
 
 
 def _normalize(text: str) -> str:
@@ -94,38 +93,12 @@ def _extract_blocks(page: pymupdf.Page, page_number: int) -> list[ParsedBlock]:
     return blocks
 
 
-def _extract_section_number(text: str) -> str | None:
-    m = _NUMBERED_RE.match(text)
-    return m.group(1) if m else None
-
-
-def _classify(text: str, size: float, is_bold: bool) -> tuple[str, str | None]:
-    section_number = _extract_section_number(text)
-
-    # 1. Large bold: top-level heading.
-    if size >= 13 and is_bold:
-        return "title", section_number
-    # 2. Medium bold: subheading.
-    if size >= 12 and is_bold:
-        return "subtitle", section_number
-    # 3. Short bold numbered: section heading ("1. Scope").
-    if section_number and is_bold and len(text) < 120:
-        return "title", section_number
-    # 4. Unnumbered annex heading.
-    if _ANNEX_RE.match(text) and len(text) < 150:
-        return "title", None
-    # 5. Short numbered line without a final period: looks like a heading
-    #    ("2.2. Definition of type(s)", but not "1.2.3. Off-road vehicles.").
-    if section_number and len(text) < 60 and not text.rstrip().endswith("."):
-        return "subtitle", section_number
-    # 6. Body text (keep the section number!).
-    return "text", section_number
-
-
 def parse_pdf(
     path: Path,
     min_block_chars: int = 5,
     layout_config: LayoutConfig | None = None,
+    style_config: StyleConfig | None = None,
+    profile: DocProfile = UNECE_PROFILE,
 ) -> ParsedDocument:
     if not path.exists():
         raise FileNotFoundError(f"PDF not found: {path}")
@@ -156,10 +129,19 @@ def parse_pdf(
             b.role = "toc"
         elif len(b.text) < min_block_chars:
             b.role = "noise"
-        else:
-            b.block_type, b.section_number = _classify(b.text, b.font_size, b.is_bold)
-
     report.role_counts = Counter(b.role for b in blocks)
-    parsed = ParsedDocument(source_path=str(path), pages=pages, blocks=blocks, layout=report)
+
+    body = [b for b in blocks if b.role == "body"]
+    styles = annotate_styles(body, style_config)
+    structure = annotate_structure(body, profile)
+
+    parsed = ParsedDocument(
+        source_path=str(path),
+        pages=pages,
+        blocks=blocks,
+        layout=report,
+        styles=styles,
+        structure=structure,
+    )
     logger.info("Parsed %d blocks: %s", len(blocks), dict(report.role_counts))
     return parsed

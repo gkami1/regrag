@@ -14,7 +14,7 @@ afterwards (`block.role = "footer"`) is not re-validated, which keeps the
 parser stages that annotate blocks in place cheap.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +26,11 @@ BBox = tuple[float, float, float, float]
 Role = Literal["body", "header", "footer", "footnote", "toc", "noise"]
 
 BlockType = Literal["heading", "text"]
+
+# Document id: becomes a directory name under data/processed/ and a prefix of
+# every block id, so it is restricted to a safe slug ("unece-r107-rev9").
+# This also rules out path tricks like "../../etc".
+DocId = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,99}$")]
 
 
 class Model(BaseModel):
@@ -60,6 +65,10 @@ class PageInfo(Model):
 
 
 class ParsedBlock(Model):
+    # "<doc_id>:<index>", e.g. "unece-r107-rev9:00412". Chunks, citations and
+    # evaluation sets refer to blocks by id. Stable for a given source PDF and
+    # parser version; a parser change that adds or removes blocks renumbers them.
+    id: str | None = None
     text: str
     page_number: int = Field(ge=1)
     bbox: BBox
@@ -116,6 +125,7 @@ class StructureReport(Model):
 
 
 class ParsedDocument(Model):
+    doc_id: DocId
     source_path: str
     pages: list[PageInfo]
     blocks: list[ParsedBlock] = Field(default_factory=list)

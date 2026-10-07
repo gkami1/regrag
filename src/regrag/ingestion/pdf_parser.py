@@ -14,13 +14,41 @@ from collections import Counter
 from pathlib import Path
 
 import pymupdf
+from pydantic import ConfigDict, Field
 
 from regrag.ingestion.layout import LayoutConfig, annotate_layout
-from regrag.ingestion.models import HLine, PageInfo, ParsedBlock, ParsedDocument
+from regrag.ingestion.models import HLine, Model, PageInfo, ParsedBlock, ParsedDocument
 from regrag.ingestion.structure import UNECE_PROFILE, DocProfile, annotate_structure
 from regrag.ingestion.styles import StyleConfig, annotate_styles
 
 logger = logging.getLogger(__name__)
+
+# Version of the parsing *logic*. Bump it whenever a change may alter the output
+# for the same PDF and config (a new rule, a fixed bug); cached results in
+# data/processed/ produced by an older version are then re-parsed.
+PARSER_VERSION = "0.3.0"
+
+
+class ParserConfig(Model):
+    """Every setting that affects parser output, in one place.
+
+    The whole object is recorded in the processed-document manifest and is part
+    of the cache key, so no setting can change without invalidating the cache.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    min_block_chars: int = 5  # shorter body blocks become role="noise"
+    layout: LayoutConfig = Field(default_factory=LayoutConfig)
+    styles: StyleConfig = Field(default_factory=StyleConfig)
+    profile: DocProfile = UNECE_PROFILE
+
+
+def default_doc_id(path: Path) -> str:
+    """Derive a doc id from a file name: "R107r9e.pdf" -> "r107r9e"."""
+    slug = re.sub(r"[^a-z0-9._-]+", "-", path.stem.lower()).strip("-.")
+    return slug or "document"
+
 
 # PyMuPDF span flag: bit 4 (value 16) = bold.
 _BOLD_FLAG = 16
@@ -95,11 +123,11 @@ def _extract_blocks(page: pymupdf.Page, page_number: int) -> list[ParsedBlock]:
 
 def parse_pdf(
     path: Path,
-    min_block_chars: int = 5,
-    layout_config: LayoutConfig | None = None,
-    style_config: StyleConfig | None = None,
-    profile: DocProfile = UNECE_PROFILE,
+    config: ParserConfig | None = None,
+    doc_id: str | None = None,
 ) -> ParsedDocument:
+    cfg = config or ParserConfig()
+    doc_id = doc_id or default_doc_id(path)
     if not path.exists():
         raise FileNotFoundError(f"PDF not found: {path}")
 
@@ -120,23 +148,27 @@ def parse_pdf(
 
     # Layout runs on *all* blocks: short ones like page numbers are exactly the
     # repeated evidence it needs, so the length filter must come after it.
-    report = annotate_layout(blocks, pages, layout_config)
+    report = annotate_layout(blocks, pages, cfg.layout)
 
     for b in blocks:
         if b.role != "body":
             continue
         if _TOC_RE.search(b.text):
             b.role = "toc"
-        elif len(b.text) < min_block_chars:
+        elif len(b.text) < cfg.min_block_chars:
             b.role = "noise"
     report.role_counts = dict(Counter(b.role for b in blocks))
 
     body = [b for b in blocks if b.role == "body"]
-    styles = annotate_styles(body, style_config)
-    structure = annotate_structure(body, profile)
+    styles = annotate_styles(body, cfg.styles)
+    structure = annotate_structure(body, cfg.profile)
+
+    for i, b in enumerate(blocks):
+        b.id = f"{doc_id}:{i:05d}"
 
     parsed = ParsedDocument(
-        source_path=str(path),
+        doc_id=doc_id,
+        source_path=path.as_posix(),
         pages=pages,
         blocks=blocks,
         layout=report,

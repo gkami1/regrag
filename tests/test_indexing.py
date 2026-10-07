@@ -4,59 +4,11 @@ Runs against Qdrant's in-process local mode (QdrantClient(":memory:")) with a
 fake embedder: no server, no model download, same client API as production.
 """
 
-import hashlib
-
 import pytest
-from qdrant_client import QdrantClient, models
+from fakes import FakeEmbedder, make_chunk
+from qdrant_client import models
 
-from regrag.chunking.models import Chunk
-from regrag.embedding.models import Embedding, SparseVector
 from regrag.indexing import ChunkIndex, IndexConfig, point_id
-
-
-class FakeEmbedder:
-    """Deterministic vectors derived from the text; counts what it was asked to embed."""
-
-    def __init__(self, model_id: str = "fake@1", dim: int = 8) -> None:
-        self.model_id = model_id
-        self.dense_dim = dim
-        self.calls: list[str] = []
-
-    def embed(self, texts: list[str]) -> list[Embedding]:
-        self.calls.extend(texts)
-        out = []
-        for text in texts:
-            digest = hashlib.sha256(text.encode()).digest()
-            dense = [b / 255 + 0.01 for b in digest[: self.dense_dim]]
-            words = sorted({abs(hash(w)) % 10_000 for w in text.lower().split()})
-            out.append(Embedding(dense, SparseVector(words, [1.0] * len(words))))
-        return out
-
-
-def make_chunk(i: int, text: str = "", doc_id: str = "doc") -> Chunk:
-    body = text or f"paragraph {i} about exits and doors"
-    return Chunk(
-        id=f"{doc_id}:c{i:05d}",
-        doc_id=doc_id,
-        index=i,
-        embed_text=f"{doc_id} | Annex 3 > 7.6 Exits\n\n{body}",
-        header=f"{doc_id} | Annex 3 > 7.6 Exits",
-        text=body,
-        token_count=10,
-        scope="Annex 3",
-        section_path=["Annex 3", "7.6 Exits"],
-        sections=[f"7.6.{i}"],
-        page_start=47,
-        page_end=47,
-        block_ids=[f"{doc_id}:{i:05d}"],
-    )
-
-
-@pytest.fixture
-def client():
-    c = QdrantClient(":memory:")
-    yield c
-    c.close()
 
 
 def make_index(client, embedder=None) -> ChunkIndex:

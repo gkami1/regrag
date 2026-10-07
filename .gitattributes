@@ -1,0 +1,2 @@
+# Keep JSONL data files byte-identical across OSes (no CRLF conversion).
+*.jsonl text eol=lf

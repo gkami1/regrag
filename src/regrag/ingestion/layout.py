@@ -19,15 +19,17 @@ import logging
 import math
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
 
-from regrag.ingestion.models import HLine, LayoutReport, PageInfo, ParsedBlock
+from pydantic import ConfigDict
+
+from regrag.ingestion.models import HLine, LayoutReport, Model, PageInfo, ParsedBlock
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class LayoutConfig:
+class LayoutConfig(Model):
+    model_config = ConfigDict(frozen=True)
+
     # Only blocks within this fraction of the page height from an edge can be furniture.
     edge_ratio: float = 0.15
     # Vertical tolerance (pt) when matching positions across pages.
@@ -177,7 +179,7 @@ def annotate_layout(
         footer_depth=round(footer_depth, 1),
         repeated_patterns=patterns,
         footnote_pages=footnote_pages,
-        role_counts=Counter(b.role for b in blocks),
+        role_counts=dict(Counter(b.role for b in blocks)),
     )
     logger.info(
         "Layout: body=%.1fpt header_depth=%.0fpt footer_depth=%.0fpt roles=%s",

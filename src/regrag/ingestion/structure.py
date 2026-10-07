@@ -28,15 +28,23 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from regrag.ingestion.models import ParsedBlock, ScopeInfo, StructureReport
+from pydantic import ConfigDict
+
+from regrag.ingestion.models import Model, ParsedBlock, ScopeInfo, StructureReport
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class DocProfile:
-    """Conventions of a document family. Everything else in the pipeline is generic."""
+class DocProfile(Model):
+    """Conventions of a document family. Everything else in the pipeline is generic.
 
+    Patterns use inline flags like `(?i)` rather than `re.IGNORECASE`, so that the
+    pattern string alone (which is what gets serialised) reproduces the regex.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str  # recorded in the processed-document manifest
     # Group 1 must capture the number ("7.6.1").
     numbering_re: re.Pattern[str]
     # Matches the start of a scope heading; group 1 is the scope id.
@@ -44,7 +52,7 @@ class DocProfile:
     # Scope for numbered text before the first annex.
     main_scope: str
     # Placeholder sections that are never labels.
-    placeholder_re: re.Pattern[str] = re.compile(r"^[(\[]?(reserved|deleted)[)\]]?\.?$", re.I)
+    placeholder_re: re.Pattern[str] = re.compile(r"(?i)^[(\[]?(reserved|deleted)[)\]]?\.?$")
     max_label_chars: int = 80  # a label is short...
     max_title_chars: int = 200  # cap for merged multi-block scope titles
 
@@ -52,12 +60,11 @@ class DocProfile:
 _DASH = r"\s*[-–—]\s*"
 
 UNECE_PROFILE = DocProfile(
+    name="unece",
     # "1.", "7.6.1." followed by text. UNECE always writes the trailing dot.
     numbering_re=re.compile(r"^\s*(\d+(?:\.\d+)*)\.\s+\S"),
     # "Annex 3", "Annex 1 – Part 1 – Appendix 2", "Annex 3 - Appendix"
-    scope_re=re.compile(
-        rf"^\s*(Annex\s+\d+[A-Z]?(?:{_DASH}(?:Part|Appendix)(?:\s+\d+)?)*)", re.IGNORECASE
-    ),
+    scope_re=re.compile(rf"(?i)^\s*(Annex\s+\d+[A-Z]?(?:{_DASH}(?:Part|Appendix)(?:\s+\d+)?)*)"),
     main_scope="Regulation",
 )
 
@@ -138,13 +145,15 @@ def annotate_structure(
                 scope=_normalize_scope(scope_match.group(1)), title_level=b.heading_level
             )
             state.scope_title = text[scope_match.end() :].strip(" -–—:")
-            report.scopes.append(ScopeInfo(state.scope, state.scope_title, b.page_number))
+            report.scopes.append(
+                ScopeInfo(id=state.scope, title=state.scope_title, first_page=b.page_number)
+            )
             b.block_type = "heading"
 
         elif num_match:
             if state.scope == FRONT_MATTER:
                 state.scope = profile.main_scope
-                report.scopes.append(ScopeInfo(state.scope, "", b.page_number))
+                report.scopes.append(ScopeInfo(id=state.scope, title="", first_page=b.page_number))
             number = tuple(int(n) for n in num_match.group(1).split("."))
             rest = text[num_match.end(1) + 1 :]
             is_label = bool(b.heading_level) or _is_label(rest, profile)

@@ -17,17 +17,19 @@ are set in body font and are recognised by numbering in `structure.py`.
 
 import logging
 from collections import Counter
-from dataclasses import dataclass
 
-from regrag.ingestion.models import ParsedBlock, StyleReport
+from pydantic import ConfigDict
+
+from regrag.ingestion.models import Model, ParsedBlock, StyleReport
 
 logger = logging.getLogger(__name__)
 
 Style = tuple[float, bool]  # (size rounded to 0.5pt, bold)
 
 
-@dataclass(frozen=True)
-class StyleConfig:
+class StyleConfig(Model):
+    model_config = ConfigDict(frozen=True)
+
     min_size_delta: float = 1.0  # pt larger than body to count as "larger"
     max_char_share: float = 0.05  # heading styles cover at most this share of text
     min_style_chars: int = 30  # ...and at least this many characters in total

@@ -129,7 +129,7 @@ def parse_pdf(
             b.role = "toc"
         elif len(b.text) < min_block_chars:
             b.role = "noise"
-    report.role_counts = Counter(b.role for b in blocks)
+    report.role_counts = dict(Counter(b.role for b in blocks))
 
     body = [b for b in blocks if b.role == "body"]
     styles = annotate_styles(body, style_config)

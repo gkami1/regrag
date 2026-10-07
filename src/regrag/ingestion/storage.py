@@ -23,10 +23,8 @@ implies "blocks.jsonl is complete", and the block count in the manifest is
 checked on load as a second line of defence.
 """
 
-import hashlib
 import json
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -43,6 +41,7 @@ from regrag.ingestion.models import (
     StyleReport,
 )
 from regrag.ingestion.pdf_parser import PARSER_VERSION, ParserConfig
+from regrag.io_utils import file_sha256, write_lines_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -80,24 +79,6 @@ class Manifest(Model):
     structure: StructureReport | None = None
 
 
-def file_sha256(path: Path, chunk_size: int = 1 << 20) -> str:
-    """Fingerprint of the file's bytes, read in 1 MB chunks to keep memory flat."""
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        while chunk := f.read(chunk_size):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _write_atomic(path: Path, lines: list[str]) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        for line in lines:
-            f.write(line)
-            f.write("\n")
-    os.replace(tmp, path)  # atomic on the same filesystem, on Windows and POSIX
-
-
 def save_document(
     doc: ParsedDocument,
     source_pdf: Path,
@@ -115,7 +96,7 @@ def save_document(
 
     # Pydantic writes non-ASCII as-is (no \u escapes), so Cyrillic GOST text
     # stays readable in the file.
-    _write_atomic(out_dir / BLOCKS_FILE, [b.model_dump_json() for b in doc.blocks])
+    write_lines_atomic(out_dir / BLOCKS_FILE, [b.model_dump_json() for b in doc.blocks])
 
     manifest = Manifest(
         schema_version=SCHEMA_VERSION,
@@ -134,7 +115,7 @@ def save_document(
         styles=doc.styles,
         structure=doc.structure,
     )
-    _write_atomic(manifest_path, [manifest.model_dump_json(indent=2)])
+    write_lines_atomic(manifest_path, [manifest.model_dump_json(indent=2)])
     logger.info("Saved %s: %d blocks -> %s", doc.doc_id, len(doc.blocks), out_dir)
     return out_dir
 

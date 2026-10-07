@@ -106,3 +106,13 @@ def test_candidates_are_limited_and_unique(indexed):
     result = HybridRetriever(client, embedder, FakeReranker(), config).search("width")
     ids = [h.chunk_id for h in result.candidates]
     assert len(ids) == 2 == len(set(ids))
+
+
+def test_pool_holds_every_retrieved_chunk_and_candidates_are_its_prefix(indexed):
+    client, embedder = indexed
+    config = CONFIG.model_copy(update={"rerank_candidates": 2})
+    result = HybridRetriever(client, embedder, FakeReranker(), config).search("width")
+    pool_ids = [h.chunk_id for h in result.pool]
+    assert len(pool_ids) == len(set(pool_ids)) > 2
+    assert [h.chunk_id for h in result.candidates] == pool_ids[:2]
+    assert all(h.dense_rank or h.sparse_rank for h in result.pool)

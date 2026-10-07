@@ -125,10 +125,11 @@ class HybridRetriever:
             k=self.cfg.rrf_k,
             weights={"dense": self.cfg.dense_weight, "sparse": self.cfg.sparse_weight},
         )
-        candidates = []
-        for cid, score in fused[: self.cfg.rerank_candidates]:
+        pool = []
+        for cid, score in fused:
             hits[cid].rrf_score = score
-            candidates.append(hits[cid])
+            pool.append(hits[cid])
+        candidates = pool[: self.cfg.rerank_candidates]
 
         ranked = candidates
         if rerank and self.reranker is not None and candidates:
@@ -147,5 +148,6 @@ class HybridRetriever:
             query=query,
             hits=[h.model_copy() for h in ranked[:k]],
             candidates=[h.model_copy() for h in candidates],
+            pool=[h.model_copy() for h in pool],
             timings_ms={name: round(v, 1) for name, v in timings.items()},
         )

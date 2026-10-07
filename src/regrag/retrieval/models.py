@@ -56,5 +56,9 @@ class Hit(Model):
 class RetrievalResult(Model):
     query: str
     hits: list[Hit]  # final top_k, best first
-    candidates: list[Hit]  # all fused candidates in fused order (for evaluation/debugging)
+    candidates: list[Hit]  # fused top-N sent to the reranker, in fused order
+    # Every chunk returned by any retriever, in fused order, with its per-retriever
+    # ranks. Lets evaluation measure each stage (dense-only, sparse-only, fused) at
+    # depths beyond the rerank cut-off.
+    pool: list[Hit] = []
     timings_ms: dict[str, float]

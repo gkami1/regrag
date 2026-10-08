@@ -1,2 +1,5 @@
 # Keep JSONL data files byte-identical across OSes (no CRLF conversion).
 *.jsonl text eol=lf
+
+# Shell scripts run on Linux pods: keep LF line endings even when edited on Windows.
+*.sh text eol=lf

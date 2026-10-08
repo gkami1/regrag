@@ -7,7 +7,7 @@ keep the port closed and tunnel it:  ssh -L 8000:localhost:8000 user@gpu-host
     python scripts/ask.py "How many service doors does a 80-passenger Class I bus need?"
     python scripts/ask.py "Минимальная ширина сиденья?" --show-context
 
-Settings (flags override environment):
+Settings (flags override environment; .env is loaded automatically):
     VLLM_BASE_URL   default http://localhost:8000/v1
     VLLM_MODEL      the served model name, e.g. Qwen/Qwen3.8-27B-FP8
     VLLM_API_KEY    the --api-key the server was started with
@@ -18,50 +18,35 @@ import logging
 import os
 import sys
 
-from qdrant_client import QdrantClient
+from dotenv import load_dotenv
 
-from regrag.embedding import EmbedderConfig
-from regrag.generation import ChunkStore, GenerationConfig, RAGPipeline, VLLMAnswerer, VLLMConfig
-from regrag.ingestion.storage import DEFAULT_PROCESSED_DIR
-from regrag.retrieval import BGEReranker, HybridRetriever, SearchFilter
+from regrag.generation.factory import build_vllm_pipeline
+from regrag.retrieval import SearchFilter
 
 sys.stdout.reconfigure(encoding="utf-8")
+load_dotenv()  # .env -> os.environ (never overrides variables already set in the shell)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("question")
-    parser.add_argument(
-        "--base-url", default=os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
-    )
-    parser.add_argument("--model", default=os.environ.get("VLLM_MODEL"))
+    parser.add_argument("--base-url", help="default: $VLLM_BASE_URL")
+    parser.add_argument("--model", help="default: $VLLM_MODEL")
     parser.add_argument("--thinking", action="store_true", help="enable the model's thinking mode")
     parser.add_argument("--doc-id", action="append")
     parser.add_argument("--scope", action="append")
     parser.add_argument("--show-context", action="store_true")
-    parser.add_argument(
-        "--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333")
-    )
+    parser.add_argument("--qdrant-url", help="default: $QDRANT_URL")
     args = parser.parse_args(argv)
-    if not args.model:
+    if not (args.model or os.environ.get("VLLM_MODEL")):
         parser.error("set --model or VLLM_MODEL to the model name the vLLM server serves")
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    from openai import OpenAI  # imported here: only this entry point needs the client library
-
-    from regrag.embedding.bge_m3 import BGEM3Embedder
-
-    llm = OpenAI(base_url=args.base_url, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
-    retriever = HybridRetriever(
-        QdrantClient(url=args.qdrant_url, api_key=os.environ.get("QDRANT_API_KEY") or None),
-        BGEM3Embedder(EmbedderConfig(device="cpu")),
-        BGEReranker(),
-    )
-    pipeline = RAGPipeline(
-        retriever,
-        ChunkStore.from_processed(DEFAULT_PROCESSED_DIR),
-        VLLMAnswerer(llm, VLLMConfig(model=args.model, enable_thinking=args.thinking)),
-        GenerationConfig(),
+    pipeline = build_vllm_pipeline(
+        model=args.model,
+        base_url=args.base_url,
+        enable_thinking=args.thinking,
+        qdrant_url=args.qdrant_url,
     )
     answer = pipeline.ask(args.question, SearchFilter(doc_ids=args.doc_id, scopes=args.scope))
 
